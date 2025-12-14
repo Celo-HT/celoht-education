@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+
+/**
+ * @title CeloHTRegistry
+ * @notice Non-custodial registry for CeloHT Agents
+ * @dev No funds, no custody, no transfers, no approvals
+ */
+contract CeloHTRegistryV2 is AccessControl, Pausable {
+
+    // -------------------- ROLES --------------------
+    bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
+    bytes32 public constant OPERATOR_ROLE   = keccak256("OPERATOR_ROLE");
+
+    // -------------------- CONSTANTS --------------------
+    string public constant VERSION = "2.0.0";
+    uint256 public constant MAX_AGENTS = 10000;
+
+    // -------------------- STRUCTS --------------------
+    struct Agent {
+        bool active;
+        uint256 registeredAt;
+        bool kycVerified;
+    }
+
+    // -------------------- STORAGE --------------------
+    mapping(address => Agent) private agents;
+    uint256 public agentCount;
+
+    // -------------------- EVENTS --------------------
+    event AgentRegistered(address indexed agent);
+    event AgentRevoked(address indexed agent);
+    event AgentKYCVerified(address indexed agent);
+    event RegistryPaused(address indexed by);
+    event RegistryUnpaused(address indexed by);
+
+    // -------------------- CONSTRUCTOR --------------------
+    constructor(address governanceMultisig) {
+        require(governanceMultisig != address(0), "Invalid governance address");
+
+        _grantRole(DEFAULT_ADMIN_ROLE, governanceMultisig);
+        _grantRole(GOVERNANCE_ROLE, governanceMultisig);
+    }
+
+    // -------------------- AGENT MANAGEMENT --------------------
+    function registerAgent(address agent)
+        external
+        onlyRole(OPERATOR_ROLE)
+        whenNotPaused
+    {
+        require(agent != address(0), "Invalid address");
+        require(!agents[agent].active, "Already active");
+        require(agentCount < MAX_AGENTS, "Agent limit reached");
+
+        agents[agent] = Agent({
+            active: true,
+            registeredAt: block.timestamp,
+            kycVerified: false
+        });
+
+        agentCount += 1;
+        emit AgentRegistered(agent);
+    }
+
+    function revokeAgent(address agent)
+        external
+        onlyRole(GOVERNANCE_ROLE)
+    {
+        require(agents[agent].active, "Not active");
+
+        agents[agent].active = false;
+        agentCount -= 1;
+
+        emit AgentRevoked(agent);
+    }
+
+    function verifyAgentKYC(address agent)
+        external
+        onlyRole(GOVERNANCE_ROLE)
+    {
+        require(agents[agent].active, "Agent not active");
+
+        agents[agent].kycVerified = true;
+        emit AgentKYCVerified(agent);
+    }
+
+    // -------------------- VIEWS --------------------
+    function isActiveAgent(address agent) external view returns (bool) {
+        return agents[agent].active;
+    }
+
+    function isKYCVerified(address agent) external view returns (bool) {
+        return agents[agent].kycVerified;
+    }
+
+    // -------------------- EMERGENCY --------------------
+    function pause() external onlyRole(GOVERNANCE_ROLE) {
+        _pause();
+        emit RegistryPaused(msg.sender);
+    }
+
+    function unpause() external onlyRole(GOVERNANCE_ROLE) {
+        _unpause();
+        emit RegistryUnpaused(msg.sender);
+    }
+}
